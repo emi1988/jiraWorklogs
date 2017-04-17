@@ -57,7 +57,24 @@ MainWindow::~MainWindow()
 void MainWindow::fetchDataFromJira()
 {
     //QUrl currentUrl("https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogDate >= '-24h' AND worklogAuthor in (currentUser())");
-    QUrl currentUrl("https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogAuthor in (currentUser())");
+    //QUrl currentUrl("https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogAuthor in (currentUser())");
+
+
+    QDate selectedDate = ui->calendarWidget->selectedDate();
+
+    QString selectedYear = QString::number(selectedDate.year());
+    QString selectedMonth = QString::number(selectedDate.month());
+    QString selectedDay = QString::number(selectedDate.day());
+
+    QString urlBuilder = "https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogDate =";
+
+    urlBuilder.append("\"" + selectedYear + "/" + selectedMonth + "/" + selectedDay + "\"");
+
+    urlBuilder.append(" AND worklogAuthor in (currentUser())");
+
+    QUrl currentUrl(urlBuilder);
+
+    //TODO: url mit aktuellem datum füttern
 
     QNetworkRequest request(currentUrl);
 
@@ -185,6 +202,8 @@ void MainWindow::parseJson(QString jasonData)
                 int selectedMonth = selectedDate.month();
                 int selectedday = selectedDate.day();
 
+                //TODO: zusätzlich auf worklogAuthor prüfen
+
                 if((worklogYear == selectedYear) & (worklogMonth == selectedMonth) & (worklogDay == selectedday))
                 {
                     qDebug() << "current worklog is from today";
@@ -200,7 +219,6 @@ void MainWindow::parseJson(QString jasonData)
                 }
             }
         }
-
 
 
         ui->lineEditTimeOfDay->setText(QString::number(secondsOfDay/3600, 'f', 0) + "h " + QString::number((secondsOfDay%3600)/60, 'f', 0) + "m");
@@ -250,8 +268,8 @@ void MainWindow::fileDownloaded(QNetworkReply* pReply) {
 
 void MainWindow::on_calendarWidget_selectionChanged()
 {
-    //parseJson(m_jsonData);
 
+    //fetchDataFromJira();
     //DEBUG
 
     QFile file("WorklogJson.txt");
