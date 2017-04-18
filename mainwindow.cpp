@@ -19,6 +19,8 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
+    m_fetchMode = 1;
+
     m_userName = "";
     m_userPw   = "";
 
@@ -44,7 +46,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(&m_WebCtrl, SIGNAL (finished(QNetworkReply*)),this, SLOT (fileDownloaded(QNetworkReply*)));
 
 
-    fetchDataFromJira();
+    fetchIssueDataFromJira();
 
 
 }
@@ -54,27 +56,46 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-void MainWindow::fetchDataFromJira()
+void MainWindow::fetchIssueDataFromJira()
 {
     //QUrl currentUrl("https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogDate >= '-24h' AND worklogAuthor in (currentUser())");
     //QUrl currentUrl("https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogAuthor in (currentUser())");
 
+    //block a new request if the old request hasn't finished
+    if(m_fetchMode == 1)
+    {
+        QDate selectedDate = ui->calendarWidget->selectedDate();
 
-    QDate selectedDate = ui->calendarWidget->selectedDate();
+        QString selectedYear = QString::number(selectedDate.year());
+        QString selectedMonth = QString::number(selectedDate.month());
+        QString selectedDay = QString::number(selectedDate.day());
 
-    QString selectedYear = QString::number(selectedDate.year());
-    QString selectedMonth = QString::number(selectedDate.month());
-    QString selectedDay = QString::number(selectedDate.day());
+        QString urlBuilder = "https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary&jql=worklogDate =";
 
-    QString urlBuilder = "https://jira.ids-intranet.de/rest/api/2/search?fields=key,summary,worklog&jql=worklogDate =";
+        urlBuilder.append("'" + selectedYear + "/" + selectedMonth + "/" + selectedDay + "'");
 
-    urlBuilder.append("\"" + selectedYear + "/" + selectedMonth + "/" + selectedDay + "\"");
+        urlBuilder.append(" AND worklogAuthor in (currentUser())");
 
-    urlBuilder.append(" AND worklogAuthor in (currentUser())");
+#ifdef USE_FILE_INSTEAD_OF_WEBREQUEST
+        QFile file("WorklogJson.txt");
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            return;
 
-    QUrl currentUrl(urlBuilder);
+        m_jsonData = file.readAll();
 
-    //TODO: url mit aktuellem datum füttern
+        parseJsonIssues(m_jsonData);
+
+        file.close();
+        file.flush();
+#else
+        doUrlWebRequest(urlBuilder);
+#endif
+    }
+}
+
+void MainWindow::doUrlWebRequest(QString url)
+{
+    QUrl currentUrl(url);
 
     QNetworkRequest request(currentUrl);
 
@@ -95,23 +116,11 @@ void MainWindow::fetchDataFromJira()
     QString headerData = "Basic " + data;
     request.setRawHeader("Authorization", headerData.toLocal8Bit());
 
+    m_WebCtrl.get(request);
 
-    QFile file("WorklogJson.txt");
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return;
-
-    m_jsonData = file.readAll();
-
-    parseJson(m_jsonData);
-
-    file.close();
-    file.flush();
-
-//DEBUG
-  //  m_WebCtrl.get(request);
 }
 
-void MainWindow::parseJson(QString jasonData)
+void MainWindow::parseJsonIssues(QString jasonData)
 {
     if(m_userName.isEmpty() | m_userPw.isEmpty())
     {
@@ -148,17 +157,29 @@ void MainWindow::parseJson(QString jasonData)
 
         qDebug() <<"amount of issues: " << issuesArray.size();
 
+        m_fetchMode = 2;
+
+        m_secondsOfDay = 0;
+
         //loop through issues
 
-        int secondsOfDay = 0;
+        m_issueData.clear();
 
-        for (int currentIssueNumber = 0; currentIssueNumber < issuesArray.size(); ++currentIssueNumber) {
-
+        for (int currentIssueNumber = 0; currentIssueNumber < issuesArray.size(); ++currentIssueNumber)
+        {
             QJsonObject currentIssueObj = issuesArray.at(currentIssueNumber).toObject();
 
             QString currentKey = currentIssueObj["key"].toString();
 
             qDebug() << "currentKey: " << currentKey;
+
+            QString currentId = currentIssueObj["id"].toString();
+
+            qDebug() << "currentId: " << currentId;
+
+            QString currentSelf = currentIssueObj["self"].toString();
+
+            qDebug() << "currentSelf: " << currentSelf;
 
             QJsonObject currentFieldsObj = currentIssueObj["fields"].toObject();
 
@@ -166,27 +187,147 @@ void MainWindow::parseJson(QString jasonData)
 
             qDebug() << "currentSummary" << currentSummary;
 
-            QJsonObject currentWorklogObj = currentFieldsObj["worklog"].toObject();
+            //save current issue data
+            stIssueData currentIssueData;
 
-            //qDebug() << currentWorklogObj.length();
+            currentIssueData.id      = currentId.toInt();
+            currentIssueData.key     = currentKey;
+            currentIssueData.self    = currentSelf;
+            currentIssueData.summary = currentSummary;
 
-            //TODO: noch testen ob max results überschritten wird
+            m_issueData.append(currentIssueData);
 
-            qDebug() << "total: " << currentWorklogObj["total"].toInt();
-            qDebug() << "maxResults: " << currentWorklogObj["maxResults"].toInt();
+            //generate a new request for every issue
 
-            QJsonArray currentWorklogsArray = currentWorklogObj["worklogs"].toArray();
+            QString urlBuilder = currentSelf;
 
-            //loop through the worklogs,
-            qDebug() <<"amount of worklogs: " << currentWorklogsArray.size();
+            urlBuilder.append("/worklog");
 
-            for (int currentWorklogNumber = 0; currentWorklogNumber < currentWorklogsArray.size(); ++currentWorklogNumber) {
+#ifdef USE_FILE_INSTEAD_OF_WEBREQUEST
+            QFile file("WorklogOnly.txt");
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+                return;
 
-                QJsonObject currentWorklogObj2 = currentWorklogsArray.at(currentWorklogNumber).toObject();
+            m_jsonData = file.readAll();
 
-                QString worklogDateStr = currentWorklogObj2["created"].toString();
-                int worklogtimeSpentSeconds = currentWorklogObj2["timeSpentSeconds"].toInt();
-                QString worklogtimeSpentStr = currentWorklogObj2["timeSpent"].toString();
+            parseJsonWorklogs(m_jsonData);
+
+            file.close();
+            file.flush();
+
+
+#else
+            doUrlWebRequest(urlBuilder);
+#endif
+
+        }
+
+        //old with limited worklog
+
+        //            QJsonObject currentWorklogObj = currentFieldsObj["worklog"].toObject();
+
+        //            //qDebug() << currentWorklogObj.length();
+
+        //            //TODO: noch testen ob max results überschritten wird
+
+        //            qDebug() << "total: " << currentWorklogObj["total"].toInt();
+        //            qDebug() << "maxResults: " << currentWorklogObj["maxResults"].toInt();
+
+        //            QJsonArray currentWorklogsArray = currentWorklogObj["worklogs"].toArray();
+
+        //            //loop through the worklogs,
+        //            qDebug() <<"amount of worklogs: " << currentWorklogsArray.size();
+
+        //            for (int currentWorklogNumber = 0; currentWorklogNumber < currentWorklogsArray.size(); ++currentWorklogNumber) {
+
+        //                QJsonObject currentWorklogObj2 = currentWorklogsArray.at(currentWorklogNumber).toObject();
+
+        //                QString worklogDateStr = currentWorklogObj2["created"].toString();
+        //                int worklogtimeSpentSeconds = currentWorklogObj2["timeSpentSeconds"].toInt();
+        //                QString worklogtimeSpentStr = currentWorklogObj2["timeSpent"].toString();
+
+        //                QStringList splitedDate = worklogDateStr.split("-");
+
+        //                int worklogYear = splitedDate.at(0).toInt();
+        //                int worklogMonth = splitedDate.at(1).toInt();
+        //                int worklogDay = splitedDate.at(2).left(2).toInt();
+
+        //                qDebug() << "current worklog date:" << worklogDay << "." << worklogMonth << "." << worklogYear;
+
+        //                QDate selectedDate = ui->calendarWidget->selectedDate();
+
+        //                int selectedYear = selectedDate.year();
+        //                int selectedMonth = selectedDate.month();
+        //                int selectedday = selectedDate.day();
+
+        //                //TODO: zusätzlich auf worklogAuthor prüfen
+
+        //                if((worklogYear == selectedYear) & (worklogMonth == selectedMonth) & (worklogDay == selectedday))
+        //                {
+        //                    qDebug() << "current worklog is from today";
+        //                    secondsOfDay = secondsOfDay + worklogtimeSpentSeconds;
+
+        //                    ui->tableWidget->setRowCount(ui->tableWidget->rowCount()+1);
+
+        //                    QTableWidgetItem *newKeyItem = new QTableWidgetItem(currentKey + "(" + currentSummary + ")");
+        //                    ui->tableWidget->setItem(ui->tableWidget->rowCount()-1,0,newKeyItem);
+
+        //                    QTableWidgetItem *newValueItem = new QTableWidgetItem(worklogtimeSpentStr);
+        //                    ui->tableWidget->setItem(ui->tableWidget->rowCount()-1,1,newValueItem);
+        //                }
+        //            }
+
+    }
+}
+
+void MainWindow::parseJsonWorklogs(QString jasonData)
+{
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(jasonData.toUtf8(), &err);
+    qDebug() << err.errorString();
+
+    if(err.errorString().compare("no error occurred") == 0)
+    {
+        ui->lineEditUserOutput->setText("succes");
+    }
+    else
+    {
+        ui->lineEditUserOutput->setText("error");
+    }
+
+    ui->tableWidget->clearContents();
+    ui->tableWidget->setRowCount(0);
+
+
+    if(doc.isObject())
+    {
+        QJsonObject obj = doc.object();
+
+        //qDebug() << obj.count();
+
+        QJsonArray worklogsArray = obj.value("worklogs").toArray();
+
+        qDebug() <<"amount of worklogs for current issue: " << worklogsArray.size();
+
+        int issueIdFromWorklog;
+
+        //loop through all worklogs for current issue
+        for (int currentWorklogNumber = 0; currentWorklogNumber < worklogsArray.size(); ++currentWorklogNumber)
+        {
+            QJsonObject currentWorklogObj = worklogsArray.at(currentWorklogNumber).toObject();
+
+            issueIdFromWorklog = currentWorklogObj["issueId"].toString().toInt();
+
+            QJsonObject currentAuthorObj = currentWorklogObj["author"].toObject();
+
+            QString currentAuthor = currentAuthorObj["name"].toString();
+
+            //only take worklogs from the current user
+            if(currentAuthor.compare(m_userName) == 0)
+            {
+                QString worklogDateStr = currentWorklogObj["updated"].toString();
+                int worklogtimeSpentSeconds = currentWorklogObj["timeSpentSeconds"].toInt();
+                QString worklogtimeSpentStr = currentWorklogObj["timeSpent"].toString();
 
                 QStringList splitedDate = worklogDateStr.split("-");
 
@@ -202,12 +343,27 @@ void MainWindow::parseJson(QString jasonData)
                 int selectedMonth = selectedDate.month();
                 int selectedday = selectedDate.day();
 
-                //TODO: zusätzlich auf worklogAuthor prüfen
-
+                //only take worklogs for the selected day
                 if((worklogYear == selectedYear) & (worklogMonth == selectedMonth) & (worklogDay == selectedday))
                 {
                     qDebug() << "current worklog is from today";
-                    secondsOfDay = secondsOfDay + worklogtimeSpentSeconds;
+                    m_secondsOfDay = m_secondsOfDay + worklogtimeSpentSeconds;
+
+                    //look-up the issue information
+                    QString currentKey, currentSummary;
+                    for (int i = 0; i < m_issueData.length(); ++i)
+                    {
+                        stIssueData currentIssueData = m_issueData.at(i);
+
+                        if(currentIssueData.id == issueIdFromWorklog)
+                        {
+                            currentKey = currentIssueData.key;
+                            currentSummary = currentIssueData.summary;
+
+                            break;
+                        }
+                    }
+
 
                     ui->tableWidget->setRowCount(ui->tableWidget->rowCount()+1);
 
@@ -220,12 +376,40 @@ void MainWindow::parseJson(QString jasonData)
             }
         }
 
+            ui->lineEditTimeOfDay->setText(QString::number(m_secondsOfDay/3600, 'f', 0) + "h " + QString::number((m_secondsOfDay%3600)/60, 'f', 0) + "m");
 
-        ui->lineEditTimeOfDay->setText(QString::number(secondsOfDay/3600, 'f', 0) + "h " + QString::number((secondsOfDay%3600)/60, 'f', 0) + "m");
+            qDebug() <<"secondsOfDay converted:" << QString::number(m_secondsOfDay/3600, 'f', 0) + "h "+ QString::number((m_secondsOfDay%3600)/60, 'f', 0) + "m";
 
-        ui->tableWidget->resizeColumnsToContents();
-        ui->tableWidget->resizeRowsToContents();
+            ui->tableWidget->resizeColumnsToContents();
+            ui->tableWidget->resizeRowsToContents();
+
+            //remove the issue from the list
+            for (int i = 0; i < m_issueData.length(); ++i)
+            {
+                stIssueData currentIssueData = m_issueData.at(i);
+
+                if(currentIssueData.id == issueIdFromWorklog)
+                {
+                   m_issueData.removeAt(i);
+
+                   //check if the list is empty
+                    if(m_issueData.isEmpty() == true)
+                    {
+                        m_fetchMode = 1;
+                    }
+
+                   break;
+                }
+
+            }
+
+
+
+            //if all issues are checked, change the fetchMode so a new date can be queried
+
+
     }
+
 
 }
 
@@ -256,30 +440,41 @@ void MainWindow::readUserData()
 void MainWindow::fileDownloaded(QNetworkReply* pReply) {
 
     m_DownloadedData = pReply->readAll();
-    //emit a signal
+
     pReply->deleteLater();
 
     QString dataAsString = QString(m_DownloadedData);
 
     qDebug() << dataAsString;
 
-    parseJson(dataAsString);
+    if(m_fetchMode == 1)
+    {
+        parseJsonIssues(dataAsString);
+    }
+    else
+    {
+        parseJsonWorklogs(dataAsString);
+    }
 }
 
 void MainWindow::on_calendarWidget_selectionChanged()
 {
 
-    //fetchDataFromJira();
-    //DEBUG
+#ifdef USE_FILE_INSTEAD_OF_WEBREQUEST
 
     QFile file("WorklogJson.txt");
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
         return;
 
-    parseJson(QString(file.readAll()));
+    parseJsonIssues(QString(file.readAll()));
 
     file.close();
     file.flush();
+
+#else
+    fetchIssueDataFromJira();
+#endif
+
 }
 
 void MainWindow::on_action_about()
@@ -339,7 +534,7 @@ void MainWindow::handleNewUserData(QString user, QString pw, bool save)
 
 void MainWindow::on_pushButtonRefetchData_clicked()
 {
-    fetchDataFromJira();
+    fetchIssueDataFromJira();
 }
 
 void MainWindow::raiseTimerFinished()

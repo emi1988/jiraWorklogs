@@ -13,6 +13,8 @@ TARGET = jiraWorkQt
 TEMPLATE = app
 
 
+DEFINES +=   USE_FILE_INSTEAD_OF_WEBREQUEST
+
 SOURCES += main.cpp\
         mainwindow.cpp \
     dialoguserdata.cpp \

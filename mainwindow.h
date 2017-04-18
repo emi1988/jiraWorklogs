@@ -14,6 +14,16 @@ namespace Ui {
 class MainWindow;
 }
 
+
+struct stIssueData
+{
+    int id;
+    QString key;
+    QString summary;
+    QString self;
+
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -27,8 +37,12 @@ private:
 
     QByteArray downloadedData() const;
 
-    void fetchDataFromJira();
-    void parseJson(QString jasonData);
+    QList<stIssueData> m_issueData;
+
+    void fetchIssueDataFromJira();
+    void doUrlWebRequest(QString url);
+    void parseJsonIssues(QString jasonData);
+    void parseJsonWorklogs(QString jasonData);
     void readUserData();
 
     QNetworkAccessManager m_WebCtrl;
@@ -37,6 +51,11 @@ private:
     QString m_userName, m_userPw;
 
     QString m_jsonData;
+    int m_secondsOfDay;
+
+    //fetchMode=1 -> fetch issues
+    //fetchMode=2 -> fetch worklogs
+    int m_fetchMode;
 
 signals:
  void downloaded();
